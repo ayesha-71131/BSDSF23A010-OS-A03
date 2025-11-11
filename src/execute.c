@@ -1,16 +1,15 @@
 #include "shell.h"
 #include <string.h>
 #include <unistd.h>
-#include <stdlib.h> // Ensure this is included for getenv()
+#include <stdlib.h> 
 
 /**
  * Executes a command given its tokenized argument list.
- * Checks for built-in commands (like 'exit', 'cd', 'jobs', 'help') before forking
- * to execute external programs.
  */
 int execute(char* arglist[]) {
-    // Check for built-in commands (Feature 2, Task 2)
-    
+
+    // --- Built-in Command Handling ---
+
     // 1. Built-in 'exit'
     if (strcmp(arglist[0], "exit") == 0) {
         printf("Exiting shell...\n");
@@ -34,13 +33,13 @@ int execute(char* arglist[]) {
         return 0; // Handled built-in
     }
 
-    // 3. Built-in 'jobs' (Placeholder/Simple implementation)
+    // 3. Built-in 'jobs' (Placeholder)
     if (strcmp(arglist[0], "jobs") == 0) {
         printf("jobs: No background jobs are currently running (job control not yet fully implemented).\n");
         return 0; // Handled built-in
     }
 
-    // 4. Built-in 'help'
+    // 4. Built-in 'help' (Updated)
     if (strcmp(arglist[0], "help") == 0) {
         printf("\n--- My Simple Shell Help ---\n");
         printf("Available built-in commands:\n");
@@ -48,12 +47,28 @@ int execute(char* arglist[]) {
         printf("  cd [DIR]     : Change the current directory (defaults to HOME).\n");
         printf("  help         : Display this help information.\n");
         printf("  jobs         : Display background jobs (currently a placeholder).\n");
+        printf("  history      : Display the command history.\n"); // Added
         printf("\nAll other commands are executed externally (e.g., 'ls', 'pwd').\n");
         printf("------------------------------\n");
         return 0; // Handled built-in
     }
 
-    // --- External Command Execution (Original Logic) ---
+    // 5. Built-in 'history' (New)
+    if (strcmp(arglist[0], "history") == 0) {
+        int start_index = (history_count > HISTORY_SIZE) ? history_count - HISTORY_SIZE : 0;
+        int current_idx = history_count % HISTORY_SIZE;
+        
+        for (int i = start_index; i < history_count; i++) {
+            int h_index = i % HISTORY_SIZE;
+            if (history[h_index] != NULL) {
+                // The line number is (i + 1)
+                printf("  %d  %s\n", i + 1, history[h_index]);
+            }
+        }
+        return 0; // Handled built-in
+    }
+
+    // --- External Command Execution ---
     int status;
     int cpid = fork();
     
