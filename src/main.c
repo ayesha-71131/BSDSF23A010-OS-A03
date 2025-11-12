@@ -95,6 +95,9 @@ int main() {
     // Feature 4: Setup the Custom Completion Hook 
     rl_attempted_completion_function = myshell_completion;
 
+    // Feature 6: Initialize job system
+    init_jobs();
+
     while ((cmdline = read_cmd(PROMPT)) != NULL) { 
         
         // Handle EOF (Ctrl+D) case where read_cmd returns NULL
@@ -113,17 +116,31 @@ int main() {
 
         // Feature 3: History Storage
         add_to_history(cmdline);
-        
-        if ((arglist = tokenize(cmdline)) != NULL) {
-            
-            execute(arglist); 
 
-            // Memory Cleanup (MUST free all tokens and the arglist array)
-            for (int i = 0; arglist[i] != NULL; i++) {
-                free(arglist[i]);
+        // === FEATURE 6: Command Chaining with Semicolon ===
+        char** commands = split_commands(cmdline);
+        
+        if (commands != NULL) {
+            // Execute each command sequentially
+            for (int i = 0; commands[i] != NULL; i++) {
+                char** arglist = tokenize(commands[i]);
+                
+                if (arglist != NULL) {
+                    execute(arglist); 
+
+                    // Memory Cleanup for tokens
+                    for (int j = 0; arglist[j] != NULL; j++) {
+                        free(arglist[j]);
+                    }
+                    free(arglist);
+                }
+                
+                // Free the command string
+                free(commands[i]);
             }
-            free(arglist);
+            free(commands);
         }
+        // === END FEATURE 6 ===
         
         // Free the command line memory allocated by readline (or strdup in re-execute)
         free(cmdline);
@@ -133,6 +150,13 @@ int main() {
     for (int i = 0; i < HISTORY_SIZE; i++) {
         if (history[i] != NULL) {
             free(history[i]);
+        }
+    }
+
+    // Feature 6: Clean up job system
+    for (int i = 0; i < MAX_JOBS; i++) {
+        if (jobs[i].cmd != NULL) {
+            free(jobs[i].cmd);
         }
     }
 

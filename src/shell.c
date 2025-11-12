@@ -40,6 +40,54 @@ char* read_cmd(char* prompt) {
     return cmdline;
 }
 
+// === FEATURE 6: Command Chaining Function ===
+/**
+ * Split command line by semicolons for command chaining
+ * Returns an array of command strings, NULL-terminated
+ */
+char** split_commands(char* cmdline) {
+    if (cmdline == NULL || cmdline[0] == '\0') {
+        return NULL;
+    }
+
+    // Allocate array for command pointers
+    char** commands = (char**)malloc(sizeof(char*) * (MAXARGS + 1));
+    if (commands == NULL) {
+        perror("myshell: malloc commands failed");
+        return NULL;
+    }
+
+    // Initialize all pointers to NULL
+    for (int i = 0; i < MAXARGS + 1; i++) {
+        commands[i] = NULL;
+    }
+
+    char* cmd_copy = strdup(cmdline); // We need to modify the string
+    char* token;
+    char* rest = cmd_copy;
+    int cmd_count = 0;
+
+    // Split by semicolon
+    while ((token = strtok_r(rest, ";", &rest)) && cmd_count < MAXARGS) {
+        // Trim leading whitespace
+        while (*token == ' ' || *token == '\t') token++;
+        
+        // Trim trailing whitespace
+        char* end = token + strlen(token) - 1;
+        while (end > token && (*end == ' ' || *end == '\t' || *end == '\n')) {
+            *end = '\0';
+            end--;
+        }
+
+        // Only add non-empty commands
+        if (strlen(token) > 0) {
+            commands[cmd_count++] = strdup(token);
+        }
+    }
+
+    free(cmd_copy);
+    return commands;
+}
 
 // --- Feature 5: MODIFIED TOKENIZER for Redirection and Pipes ---
 // Now handles spaces, tabs, and treats '<', '>', '|' as separate tokens.

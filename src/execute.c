@@ -8,15 +8,21 @@
 
 #define MAX_COMMANDS_IN_PIPE 2 // Limiting to one pipe (two commands) for simplicity
 
+// Feature 6: Global job list (defined here, declared in shell.h)
+job_t jobs[MAX_JOBS];
+int job_count = 0;
+int next_job_id = 1;
+
 // Helper structure to hold command arguments and file paths
 typedef struct {
     char* args[MAXARGS]; // Array for command arguments (before redirection)
     char* input_file;    // Filename for < redirection
     char* output_file;   // Filename for > redirection
     char* append_file;   // Filename for >> redirection
+    int background;      // Feature 6: Run in background?
 } command_info_t;
 
-// --- Built-in Commands Implementation (Feature 2 & 3) ---
+// --- Built-in Commands Implementation (Feature 2 & 3 & 6) ---
 
 /**
  * Executes a built-in command if found.
@@ -29,6 +35,7 @@ int execute_builtin(char* arglist[]) {
 
     // exit
     if (strcmp(arglist[0], "exit") == 0) {
+        printf("Exiting myshell...\n");
         exit(0);
     } 
     // cd 
@@ -60,25 +67,97 @@ int execute_builtin(char* arglist[]) {
         }
         return 1;
     }
-    // === ADDED: help command (Feature 2) ===
+    // help command (Feature 2)
     else if (strcmp(arglist[0], "help") == 0) {
         printf("Built-in commands:\n");
         printf("  cd [directory]    - Change directory\n");
         printf("  exit              - Exit the shell\n");
         printf("  history           - Show command history\n");
         printf("  help              - Show this help message\n");
-        printf("  jobs              - Job control (not implemented)\n");
+        printf("  jobs              - List background jobs\n");
         return 1;
     }
-    // === ADDED: jobs command (Feature 2) ===
+    // jobs command (Feature 6 - UPDATED)
     else if (strcmp(arglist[0], "jobs") == 0) {
-        printf("Job control not yet implemented.\n");
+        // Feature 6: List all background jobs
+        reap_zombies(); // Clean up completed jobs first
+        
+        if (job_count == 0) {
+            printf("No background jobs running.\n");
+        } else {
+            printf("Background jobs:\n");
+            for (int i = 0; i < MAX_JOBS; i++) {
+                if (jobs[i].pid != -1) { // Only show active jobs
+                    printf("[%d] %d %s\n", jobs[i].job_id, jobs[i].pid, jobs[i].cmd);
+                }
+            }
+        }
         return 1;
     }
 
     return 0;
 }
 
+// --- Feature 6: Background Job Management ---
+
+/**
+ * Add a job to the job list
+ */
+void add_job(pid_t pid, char* cmd) {
+    if (job_count >= MAX_JOBS) {
+        fprintf(stderr, "myshell: too many background jobs\n");
+        return;
+    }
+    
+    // Find empty slot
+    for (int i = 0; i < MAX_JOBS; i++) {
+        if (jobs[i].pid == -1) {
+            jobs[i].pid = pid;
+            jobs[i].cmd = strdup(cmd);
+            jobs[i].job_id = next_job_id++;
+            job_count++;
+            printf("[%d] %d\n", jobs[i].job_id, pid);
+            return;
+        }
+    }
+}
+
+/**
+ * Remove a job from the job list by PID
+ */
+void remove_job(pid_t pid) {
+    for (int i = 0; i < MAX_JOBS; i++) {
+        if (jobs[i].pid == pid) {
+            free(jobs[i].cmd);
+            jobs[i].pid = -1;
+            jobs[i].cmd = NULL;
+            job_count--;
+            return;
+        }
+    }
+}
+
+/**
+ * Reap zombie processes (completed background jobs)
+ */
+void reap_zombies() {
+    int status;
+    pid_t pid;
+    
+    // WNOHANG makes waitpid non-blocking
+    while ((pid = waitpid(-1, &status, WNOHANG)) > 0) {
+        printf("[%d] Done\t", pid);
+        
+        // Find and remove the job
+        for (int i = 0; i < MAX_JOBS; i++) {
+            if (jobs[i].pid == pid) {
+                printf("%s\n", jobs[i].cmd);
+                remove_job(pid);
+                break;
+            }
+        }
+    }
+}
 
 // --- Helper function to find the pipe symbol (Feature 5) ---
 int find_pipe(char* arglist[]) {
@@ -90,8 +169,7 @@ int find_pipe(char* arglist[]) {
     return -1; // No pipe found
 }
 
-
-// --- I/O Redirection & Single Command Execution (Feature 5) ---
+// --- I/O Redirection & Single Command Execution (Feature 5 & 6) ---
 
 /**
  * Parses the command line for redirection symbols and populates command_info_t.
@@ -100,6 +178,8 @@ int find_pipe(char* arglist[]) {
  */
 int parse_command_for_redirection(char* arglist[], command_info_t* cmd_info) {
     int cmd_end_idx = 0;
+    cmd_info->background = 0; // Initialize background flag
+    
     for (int i = 0; arglist[i] != NULL; i++) {
         
         // Redirection symbols must be handled by the shell, not passed to execvp
@@ -130,6 +210,12 @@ int parse_command_for_redirection(char* arglist[], command_info_t* cmd_info) {
                 return -1; // Error
             }
         } 
+        else if (strcmp(arglist[i], "&") == 0) {
+            // Feature 6: Background operator
+            cmd_info->background = 1;
+            // Don't include '&' in command arguments
+            break;
+        }
         else {
             // This is a regular command argument
             cmd_info->args[cmd_end_idx++] = arglist[i];
@@ -200,8 +286,9 @@ int process_redirection(command_info_t* cmd_info) {
  * Executes a single command (potentially with I/O redirection).
  * This function is used by both the main execute() and the pipe handler.
  * is_piped: 1 if this execution is part of a pipe, 0 otherwise.
+ * is_chained: 1 if this execution is part of command chaining, 0 otherwise.
  */
-int execute_single_command(char* arglist[], int is_piped) {
+int execute_single_command(char* arglist[], int is_piped, int is_chained, char* original_cmd) {
     command_info_t cmd_info = {0};
     pid_t pid;
     int status;
@@ -211,16 +298,15 @@ int execute_single_command(char* arglist[], int is_piped) {
         return 0;
     }
     
-    // 1. Parse Redirection
+    // 1. Parse Redirection and Background operator
     if (parse_command_for_redirection(arglist, &cmd_info) == -1) {
         return 1; // Error during parsing
     }
 
-    // Check for built-ins *before* fork/exec cycle, but *after* argument parsing.
-    // NOTE: Built-ins should not be part of a pipe (e.g., 'cd | grep').
-    // If a built-in is found, we execute it in the parent shell process.
+    // Check for built-ins *before* fork/exec cycle
+    // Built-ins should execute in the parent process, especially for chained commands
     if (!is_piped && execute_builtin(cmd_info.args)) {
-        return 0; // Built-in successfully executed
+        return 0; // Built-in successfully executed in parent
     }
     
     // 2. Fork and Execute External Command
@@ -250,14 +336,20 @@ int execute_single_command(char* arglist[], int is_piped) {
         exit(1); // Exit child on execvp failure
     }
     
-    // Parent process: Wait for the child to finish
-    if (waitpid(pid, &status, 0) == -1) {
-        // This waitpid call is crucial for sequential execution
-        perror("myshell: waitpid failed");
-        return 1;
+    // Parent process
+    if (cmd_info.background && !is_piped) {
+        // Feature 6: Background execution - don't wait
+        add_job(pid, original_cmd);
+    } else {
+        // Foreground execution - wait for completion
+        if (waitpid(pid, &status, 0) == -1) {
+            perror("myshell: waitpid failed");
+            return 1;
+        }
+        return WEXITSTATUS(status);
     }
     
-    return WEXITSTATUS(status);
+    return 0;
 }
 
 /**
@@ -299,7 +391,7 @@ int execute_pipe(char* arglist[], int pipe_index) {
         close(pfd[1]); // Close pipe's write end (dup2 made a copy)
         
         // Execute the left command (handles its own I/O redirection if any)
-        execute_single_command(cmd_left, 1);
+        execute_single_command(cmd_left, 1, 0, NULL);
         exit(1); // execute_single_command handles error exit itself, but defensive exit(1) on function return
     } 
 
@@ -323,7 +415,7 @@ int execute_pipe(char* arglist[], int pipe_index) {
         close(pfd[0]); // Close pipe's read end
         
         // Execute the right command (handles its own I/O redirection if any)
-        execute_single_command(cmd_right, 1);
+        execute_single_command(cmd_right, 1, 0, NULL);
         exit(1); // defensive exit(1)
     }
 
@@ -340,12 +432,15 @@ int execute_pipe(char* arglist[], int pipe_index) {
 
 
 /**
- * Main entry point for command execution. (Feature 1, 5)
+ * Main entry point for command execution. (Feature 1, 5, 6)
  */
 int execute(char* arglist[]) {
     if (arglist == NULL || arglist[0] == NULL) {
         return 0;
     }
+
+    // Feature 6: Reap zombie processes before executing new command
+    reap_zombies();
 
     int pipe_index = find_pipe(arglist);
 
@@ -354,6 +449,23 @@ int execute(char* arglist[]) {
         return execute_pipe(arglist, pipe_index);
     } else {
         // Handle single command (with possible redirection/built-ins)
-        return execute_single_command(arglist, 0);
+        // Create a command string for job tracking
+        char cmd_str[1024] = {0};
+        for (int i = 0; arglist[i] != NULL && i < 10; i++) {
+            if (i > 0) strcat(cmd_str, " ");
+            strcat(cmd_str, arglist[i]);
+        }
+        return execute_single_command(arglist, 0, 0, cmd_str);
     }
+}
+
+// Feature 6: Initialize job list
+void init_jobs() {
+    for (int i = 0; i < MAX_JOBS; i++) {
+        jobs[i].pid = -1;
+        jobs[i].cmd = NULL;
+        jobs[i].job_id = 0;
+    }
+    job_count = 0;
+    next_job_id = 1;
 }
