@@ -1,0 +1,9 @@
+total 28
+drwxrwxr-x 2 ayesha ayesha 4096 Nov 12 09:56 bin
+drwxrwxr-x 2 ayesha ayesha 4096 Nov 12 07:58 include
+-rw-r--r-- 1 ayesha ayesha    0 Nov 12 09:57 listing.txt
+-rw-rw-r-- 1 ayesha ayesha  973 Nov 12 09:55 Makefile
+drwxrwxr-x 2 ayesha ayesha 4096 Nov 12 09:56 obj
+-rw-rw-r-- 1 ayesha ayesha   20 Nov 11 20:33 README.md
+drwxrwxr-x 2 ayesha ayesha 4096 Nov 12 09:56 src
+-rw-r--r-- 1 ayesha ayesha   14 Nov 12 09:57 test.txt
